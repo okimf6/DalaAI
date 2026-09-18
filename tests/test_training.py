@@ -33,7 +33,7 @@ def test_training_checkpoint_and_inference(tmp_path, monkeypatch) -> None:
         for index, class_id in enumerate(CLASSES):
             folder = tmp_path / "dataset" / split / class_id
             folder.mkdir(parents=True)
-            Image.new("RGB", (256, 256), (30 + index * 40, 100, 20)).save(folder / "sample.jpg")
+            Image.new("RGB", (256, 256), (30 + index * 40, 100 + ("train", "val", "test").index(split) * 20, 20)).save(folder / "sample.jpg")
     # Не скачиваем ImageNet в тестах: проверяем цикл и контракт сохранения.
     monkeypatch.setattr(training, "build_model", lambda pretrained: build_model(False))
     args = argparse.Namespace(data=tmp_path / "dataset", epochs=1, batch_size=2,

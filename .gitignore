@@ -23,3 +23,5 @@ sample_images/*
 .streamlit/secrets.toml
 .env
 .env.*
+
+dataset_raw/

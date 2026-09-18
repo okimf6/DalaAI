@@ -32,6 +32,7 @@ def test_upload_diagnosis_history_and_bad_file() -> None:
     Image.new("RGB", (640, 480), "green").save(image, format="PNG")
     with patch("streamlit.file_uploader", return_value=image):
         app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+        app.toggle[0].set_value(True).run(timeout=30)
         for _ in range(6):
             next(b for b in app.button if b.label == "Провести диагностику").click().run()
         assert not app.exception

@@ -11,3 +11,5 @@ user_images
 .streamlit/secrets.toml
 .env
 work
+
+dataset_raw/

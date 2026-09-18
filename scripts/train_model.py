@@ -1,5 +1,7 @@
 """Обучение MobileNetV3 Small: train/val/test с проверкой единого порядка классов."""
 import argparse
+import json
+from time import perf_counter
 import random
 import sys
 from pathlib import Path
@@ -11,6 +13,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from utils.evaluation import check_split_leakage, evaluate_model
 from utils.model_config import CLASSES, MODEL_PATH, build_model, inference_transform
 
 
@@ -86,18 +89,23 @@ def train(args: argparse.Namespace) -> dict:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == "cpu":
         torch.set_num_threads(min(4, torch.get_num_threads()))
+    started = perf_counter()
+    counts = check_split_leakage(args.data)
     loaders = make_loaders(args.data, args.batch_size, args.seed)
     model = build_model(pretrained=True).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     best_accuracy = -1.0
     stale = 0
+    history = []
     print(f"Устройство: {device}. Порядок классов: {list(CLASSES)}")
     for epoch in range(1, args.epochs + 1):
         train_loss, train_accuracy = run_epoch(model, loaders["train"], device, optimizer)
         val_loss, val_accuracy = run_epoch(model, loaders["val"], device)
         print(f"Эпоха {epoch:02d}/{args.epochs}: train loss={train_loss:.4f}, accuracy={train_accuracy:.2%}; "
               f"val loss={val_loss:.4f}, accuracy={val_accuracy:.2%}", flush=True)
+        history.append({"epoch": epoch, "train_loss": train_loss, "train_accuracy": train_accuracy,
+                        "val_loss": val_loss, "val_accuracy": val_accuracy})
         if val_accuracy > best_accuracy:
             best_accuracy = val_accuracy
             stale = 0
@@ -118,11 +126,18 @@ def train(args: argparse.Namespace) -> dict:
     checkpoint = torch.load(args.output, map_location="cpu", weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     test_loss, test_accuracy = run_epoch(model, loaders["test"], device)
+    metrics = evaluate_model(model, loaders["test"], device)
+    metrics.update({"best_val_accuracy": best_accuracy, "best_epoch": checkpoint["epoch"],
+                    "history": history, "counts": counts, "seed": args.seed,
+                    "training_seconds": perf_counter() - started,
+                    "evaluation_scope": "internal image-level holdout; not independent field validation"})
+    checkpoint["metrics"] = metrics
     checkpoint["test_accuracy"] = test_accuracy
     checkpoint["test_loss"] = test_loss
     temporary = args.output.with_suffix(".tmp")
     torch.save(checkpoint, temporary)
     temporary.replace(args.output)
+    args.output.with_suffix(".metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Лучшая val accuracy: {best_accuracy:.2%}. Test accuracy: {test_accuracy:.2%}, loss: {test_loss:.4f}")
     print(f"Модель сохранена: {args.output}")
     return checkpoint

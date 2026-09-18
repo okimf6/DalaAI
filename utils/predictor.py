@@ -20,6 +20,7 @@ class WheatDiseasePredictor:
         self.device = "демонстрация"
         self._lock = RLock()
         self.model = None
+        self.metrics = None
         if demo_mode:
             return
         if not model_path.is_file():
@@ -33,6 +34,7 @@ class WheatDiseasePredictor:
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
                 if "classes" in checkpoint and tuple(checkpoint["classes"]) != CLASSES:
                     raise ValueError("Порядок классов checkpoint не совпадает с приложением.")
+                self.metrics = checkpoint.get("metrics")
                 state = checkpoint["model_state_dict"]
             else:
                 state = checkpoint

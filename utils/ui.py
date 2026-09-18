@@ -1,5 +1,6 @@
 """Компоненты оформления и результата; логика модели находится отдельно."""
 import streamlit as st
+from utils.i18n import tr, localize_diseases
 from utils.recommendations import confidence_level, get_recommendation
 
 
@@ -25,62 +26,75 @@ def apply_style() -> None:
     </style>""", unsafe_allow_html=True)
 
 
-def render_result(result: dict, diseases: dict) -> None:
+def render_result(result: dict, diseases: dict, language: str = "ru") -> None:
     """Показывает вероятности и пороговую интерпретацию без ложной определённости."""
     ranking = sorted(result["probabilities"].items(), key=lambda item: item[1], reverse=True)
     name, confidence = ranking[0]
     info = get_recommendation(name, diseases)
     level = confidence_level(confidence)
     with st.container(border=True):
-        st.subheader("Результат анализа" if not result["demo"] else "Демонстрационный результат")
+        st.subheader(tr("Результат анализа", language) if not result["demo"] else tr("Демонстрационный результат", language))
         if result["demo"]:
-            st.warning("СИМУЛЯЦИЯ: вероятности, риск и состояние ниже показаны только для проверки интерфейса. Они не характеризуют ваш снимок.")
+            st.warning(tr("СИМУЛЯЦИЯ: вероятности, риск и состояние ниже показаны только для проверки интерфейса. Они не характеризуют ваш снимок.", language))
         if level == "high":
-            st.success("Вероятное состояние: " + info["name_ru"])
+            st.success(tr("Вероятное состояние: ", language) + info["name"])
         elif level == "medium":
-            st.warning("Предположение: " + info["name_ru"] + ". Уверенность недостаточна. Сделайте дополнительную фотографию.")
+            st.warning(tr("Предположение: ", language) + info["name"] + tr(". Уверенность недостаточна. Сделайте дополнительную фотографию.", language))
         else:
-            st.error("Состояние надёжно определить не удалось. Повторите съёмку и обратитесь к агроному.")
-            st.caption("Наиболее вероятная, но ненадёжная гипотеза: " + info["name_ru"])
+            st.error(tr("Состояние надёжно определить не удалось. Повторите съёмку и обратитесь к агроному.", language))
+            st.caption(tr("Наиболее вероятная, но ненадёжная гипотеза: ", language) + info["name"])
         x, y, z = st.columns(3)
-        x.metric("Демо-вероятность" if result["demo"] else "Уверенность модели", f"{confidence:.1%}")
-        y.metric("Риск предполагаемого состояния", info["risk"] if level == "high" else "Не определён")
-        z.metric("Время анализа", f"{result['seconds']:.2f} с")
-        st.caption("Время включает проверку файла, подготовку, оценку качества и прогноз; загрузка и прогрев весов выполняются заранее.")
+        x.metric(tr("Демо-вероятность", language) if result["demo"] else tr("Уверенность модели", language), f"{confidence:.1%}")
+        y.metric(tr("Риск предполагаемого состояния", language), info["risk"] if level == "high" else tr("Не определён", language))
+        z.metric(tr("Время анализа", language), f"{result['seconds']:.2f} с")
+        st.caption(tr("Время включает проверку файла, подготовку, оценку качества и прогноз; загрузка и прогрев весов выполняются заранее.", language))
         if result["seconds"] >= 5:
-            st.warning("Анализ занял больше целевых 5 секунд. Скорость зависит от оборудования и размера снимка.")
+            st.warning(tr("Анализ занял больше целевых 5 секунд. Скорость зависит от оборудования и размера снимка.", language))
         for note in result["quality"]["warnings"]:
-            st.warning(note)
-        st.markdown("#### Три наиболее вероятных состояния")
+            st.warning(tr(note, language))
+        st.markdown(tr("#### Три наиболее вероятных состояния", language))
         for class_id, probability in ranking[:3]:
-            st.progress(float(probability), text=f"{diseases[class_id]['name_ru']} · {probability:.1%}")
-        st.caption("Softmax-вероятность не равна доказанной точности диагноза. Неизвестные заболевания и другие растения модель не распознаёт.")
-        st.markdown("#### Справка по ведущей гипотезе")
-        st.markdown(f"<span style='color:{info['color']};font-weight:700'>{info['name_ru']}</span>", unsafe_allow_html=True)
+            st.progress(float(probability), text=f"{diseases[class_id]['name']} · {probability:.1%}")
+        st.caption(tr("Softmax-вероятность не равна доказанной точности диагноза. Неизвестные заболевания и другие растения модель не распознаёт.", language))
+        st.markdown(tr("#### Справка по ведущей гипотезе", language))
+        st.markdown(f"<span style='color:{info['color']};font-weight:700'>{info['name']}</span>", unsafe_allow_html=True)
         st.write(info["description"])
-        st.caption("Справочный риск состояния: " + info["risk"] + ". Наличие заболевания на снимке этим не подтверждается.")
+        st.caption(tr("Справочный риск состояния: ", language) + info["risk"] + tr(". Наличие заболевания на снимке этим не подтверждается.", language))
         signs, actions = st.columns(2)
         with signs:
-            st.markdown("**Визуальные признаки**")
+            st.markdown(tr("**Визуальные признаки**", language))
             for sign in info["signs"]:
                 st.write("• " + sign)
         with actions:
-            st.markdown("**Что сделать дальше**")
+            st.markdown(tr("**Что сделать дальше**", language))
             for action in info["actions"]:
                 st.write("• " + action)
 
 
-def render_history(diseases: dict) -> None:
+def render_history(diseases: dict, language: str = "ru") -> None:
     """Пять последних анализов без сохранения пользовательских фотографий."""
-    st.subheader("История обследований")
-    st.caption("Последние пять анализов в текущей сессии. После потери сессии история исчезнет.")
-    if st.button("Очистить историю", disabled=not st.session_state["history"]):
+    st.subheader(tr("История обследований", language))
+    st.caption(tr("Последние пять анализов в текущей сессии. После потери сессии история исчезнет.", language))
+    if st.button(tr("Очистить историю", language), disabled=not st.session_state["history"]):
         st.session_state["history"] = []
     if not st.session_state["history"]:
-        st.info("Здесь появятся результаты после первого анализа.")
+        st.info(tr("Здесь появятся результаты после первого анализа.", language))
     for result in st.session_state["history"]:
         name = max(result["probabilities"], key=result["probabilities"].get)
         value = result["probabilities"][name]
-        mode = "ДЕМО · не диагноз" if result["demo"] else "Модель"
-        state = diseases[name]["name_ru"] if confidence_level(value) != "low" else "Не определено"
+        mode = tr("ДЕМО · не диагноз", language) if result["demo"] else tr("Модель", language)
+        state = diseases[name]["name"] if confidence_level(value) != "low" else tr("Не определено", language)
         st.write(f"{result['time']} · {mode} · {state} · {value:.1%} · {result['seconds']:.2f} с")
+
+
+def render_model_card(predictor, language: str = "ru") -> None:
+    """Показывает метрики именно загруженного checkpoint, если они сохранены."""
+    if not predictor.metrics:
+        return
+    metrics = predictor.metrics
+    with st.expander(tr("Карточка модели и результаты проверки", language)):
+        a, b = st.columns(2)
+        a.metric(tr("Тестовая accuracy", language), f"{metrics['accuracy']:.1%}")
+        b.metric(tr("Число тестовых снимков", language), str(metrics["sample_count"]))
+        st.caption(tr("Внутренняя тестовая выборка; это не независимая проверка на новых полях.", language))
+        st.markdown("[Wheat Disease Dataset — Small · CC BY 4.0](https://doi.org/10.5281/zenodo.7307816)")
