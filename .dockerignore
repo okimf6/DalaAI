@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+.pytest_cache
+dataset
+uploads
+user_images
+*.pth
+*.pt
+.streamlit/secrets.toml
+.env
+work
