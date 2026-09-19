@@ -21,6 +21,7 @@ class WheatDiseasePredictor:
         self._lock = RLock()
         self.model = None
         self.metrics = None
+        self.model_id = "demo"
         if demo_mode:
             return
         if not model_path.is_file():
@@ -30,6 +31,7 @@ class WheatDiseasePredictor:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             if self.device == "cpu":
                 torch.set_num_threads(min(4, torch.get_num_threads()))
+            self.model_id = sha256(model_path.read_bytes()).hexdigest()
             checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
                 if "classes" in checkpoint and tuple(checkpoint["classes"]) != CLASSES:

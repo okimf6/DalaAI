@@ -13,3 +13,5 @@ user_images
 work
 
 dataset_raw/
+
+model/image_guard/

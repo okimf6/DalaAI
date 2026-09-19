@@ -1,22 +1,28 @@
 """Русско-казахский интерфейс DalaScan AI. Запуск: streamlit run app.py."""
-from datetime import datetime
 from hashlib import sha256
-from time import perf_counter
 
 import streamlit as st
 
-from utils.image_processing import safe_open_image, prepare_image, check_quality, ImageValidationError
+from utils.image_processing import safe_open_image, prepare_image, ImageValidationError
 from utils.model_config import MODEL_PATH
+from utils.image_guard import WheatImageGuard, GuardUnavailableError, GUARD_PATH, POLICY_VERSION
+from utils.analysis import analyze_photo
 from utils.predictor import WheatDiseasePredictor, ModelUnavailableError
 from utils.i18n import tr, localize_diseases
 from utils.recommendations import load_diseases
-from utils.ui import apply_style, render_result, render_history, render_model_card
+from utils.ui import apply_style, render_result, render_history, render_model_card, render_pdf_download
 
 
 @st.cache_resource(show_spinner=False, max_entries=2)
 def get_predictor(demo: bool, version: tuple) -> WheatDiseasePredictor:
     """Кэш весов общий для сессий; версия инвалидируется при замене файла."""
     return WheatDiseasePredictor(demo_mode=demo)
+
+
+@st.cache_resource(show_spinner=False, max_entries=1)
+def get_image_guard(version: tuple) -> WheatImageGuard:
+    """Одна локальная проверка CLIP для всех сессий, с блокировкой инференса."""
+    return WheatImageGuard()
 
 
 def main() -> None:
@@ -71,6 +77,20 @@ def main() -> None:
         st.info(tr("Исследовательская модель: обучена на открытом датасете. На местных полях качество ещё не проверено.", language))
         render_model_card(predictor, language)
 
+    guard = None
+    guard_version = (POLICY_VERSION, 0, 0)
+    if predictor and not demo:
+        try:
+            guard_file = GUARD_PATH / "pytorch_model.bin"
+            if guard_file.is_file():
+                guard_stat = guard_file.stat()
+                guard_version = (POLICY_VERSION, guard_stat.st_mtime_ns, guard_stat.st_size)
+            with st.spinner(tr("Подготовка проверки снимков…", language)):
+                guard = get_image_guard(guard_version)
+        except (GuardUnavailableError, OSError) as exc:
+            st.error(tr(str(exc), language) if isinstance(exc, GuardUnavailableError) else tr("Проверка снимков недоступна. Диагностика не выполнялась.", language))
+    st.caption(tr("Проверка содержимого экспериментальная: похожие злаки могут быть приняты за пшеницу.", language))
+
     left, right = st.columns([1.35, 1], gap="large")
     with left:
         with st.container(border=True):
@@ -90,37 +110,34 @@ def main() -> None:
                     st.image(image, caption=tr("Ваш снимок · подготовлен для анализа", language), use_container_width=True)
                 except ImageValidationError as exc:
                     st.error(tr(str(exc), language))
-            current_key = (sha256(raw).hexdigest() if raw else None, demo, version)
+            current_key = (sha256(raw).hexdigest() if raw else None, demo, version, guard_version)
             if st.session_state.get("result_key") != current_key:
                 st.session_state.pop("result", None)
             analyze = st.button(tr("Провести диагностику", language), type="primary", use_container_width=True,
-                                disabled=image is None or predictor is None)
+                                disabled=image is None or predictor is None or (not demo and guard is None))
     with right:
         with st.container(border=True):
             st.subheader(tr("Хороший снимок — первый шаг", language))
             st.markdown(tr("1. Держите лист **в фокусе**.\n2. Используйте **естественное освещение**.\n3. Покажите больной участок **крупным планом**.\n4. Избегайте **сильных теней**.", language))
-            st.caption(tr("Лучше снять отдельный лист, а затем соседние растения. Модель не проверяет, действительно ли в кадре пшеница.", language))
+            st.caption(tr("Лучше снять отдельный лист, а затем соседние растения. Если содержимое не удалось подтвердить, диагноз не выдаётся.", language))
         st.info(tr("Оценка помогает выбрать следующий шаг обследования. Итоговое решение принимает агроном.", language), icon="🌱")
 
     if analyze and raw is not None and predictor is not None:
+        st.session_state.pop("result", None)
         try:
             with st.spinner(tr("Анализируем снимок…", language)):
-                started = perf_counter()
-                image = prepare_image(safe_open_image(raw))
-                quality = check_quality(image)
-                probabilities = predictor.predict(image)
-                elapsed = perf_counter() - started
-                result = {"probabilities": probabilities, "seconds": elapsed, "demo": demo,
-                          "time": datetime.now().strftime("%d.%m %H:%M:%S"), "quality": quality}
+                result = analyze_photo(raw, predictor, guard)
                 st.session_state["result"] = result
                 st.session_state["result_key"] = current_key
-                st.session_state["history"] = [result, *st.session_state["history"]][:5]
-        except (ImageValidationError, ModelUnavailableError) as exc:
+                history_entry = {key: value for key, value in result.items() if key != "photo_jpeg"}
+                st.session_state["history"] = [history_entry, *st.session_state["history"]][:5]
+        except (ImageValidationError, ModelUnavailableError, GuardUnavailableError) as exc:
             st.error(tr(str(exc), language))
         except Exception:
             st.error(tr("Не удалось завершить анализ. Повторите попытку с другим снимком.", language))
     if "result" in st.session_state:
         render_result(st.session_state["result"], diseases, language)
+        render_pdf_download(st.session_state["result"], language)
     render_history(diseases, language)
     st.divider()
     st.caption(tr("Результат является предварительной оценкой и не заменяет консультацию агронома. Перед применением средств защиты растений необходимо проверить местные регламенты и инструкцию производителя", language))

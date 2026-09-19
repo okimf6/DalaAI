@@ -28,6 +28,16 @@ def apply_style() -> None:
 
 def render_result(result: dict, diseases: dict, language: str = "ru") -> None:
     """Показывает вероятности и пороговую интерпретацию без ложной определённости."""
+    guard = result.get("guard", {})
+    if guard:
+        st.info(tr(guard["message"], language))
+    if not result.get("probabilities"):
+        st.error(tr("Диагностика не выполнялась", language))
+        st.caption(tr("Снимите отдельный лист пшеницы крупным планом и повторите анализ.", language))
+        st.metric(tr("Время анализа", language), f"{result['seconds']:.2f} с")
+        for note in result["quality"]["warnings"]:
+            st.warning(tr(note, language))
+        return
     ranking = sorted(result["probabilities"].items(), key=lambda item: item[1], reverse=True)
     name, confidence = ranking[0]
     info = get_recommendation(name, diseases)
@@ -80,6 +90,10 @@ def render_history(diseases: dict, language: str = "ru") -> None:
     if not st.session_state["history"]:
         st.info(tr("Здесь появятся результаты после первого анализа.", language))
     for result in st.session_state["history"]:
+        if not result.get("probabilities"):
+            st.write(f"{result['time']} · {tr('Диагностика не выполнялась', language)}")
+            st.caption(tr(result.get("guard", {}).get("message", ""), language))
+            continue
         name = max(result["probabilities"], key=result["probabilities"].get)
         value = result["probabilities"][name]
         mode = tr("ДЕМО · не диагноз", language) if result["demo"] else tr("Модель", language)
@@ -98,3 +112,21 @@ def render_model_card(predictor, language: str = "ru") -> None:
         b.metric(tr("Число тестовых снимков", language), str(metrics["sample_count"]))
         st.caption(tr("Внутренняя тестовая выборка; это не независимая проверка на новых полях.", language))
         st.markdown("[Wheat Disease Dataset — Small · CC BY 4.0](https://doi.org/10.5281/zenodo.7307816)")
+
+
+def render_pdf_download(result: dict, language: str = "ru") -> None:
+    """Создаёт приватный PDF в памяти только для текущего результата."""
+    if not result.get("photo_jpeg"):
+        return
+    with st.expander(tr("Скачать отчёт обследования", language), expanded=True):
+        field_name = st.text_input("Поле / Учаске", max_chars=120, key="report_field")
+        notes = st.text_area("Заметка / Ескертпе", max_chars=2000, key="report_notes")
+        try:
+            from utils.pdf_report import create_pdf_report
+            pdf = create_pdf_report(result, language, field_name, notes)
+            st.download_button(tr("Скачать PDF", language), data=pdf,
+                               file_name=f"DalaScan-{result['image_sha256'][:8]}-{language}.pdf",
+                               mime="application/pdf", key="download_report")
+            st.caption(tr("Отчёт содержит снимок и результат текущего анализа. Проверьте данные перед передачей агроному.", language))
+        except Exception:
+            st.error(tr("Не удалось создать PDF. Проверьте установку reportlab и наличие шрифта в assets/fonts.", language))

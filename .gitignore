@@ -25,3 +25,5 @@ sample_images/*
 .env.*
 
 dataset_raw/
+
+model/image_guard/
