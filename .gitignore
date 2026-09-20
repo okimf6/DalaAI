@@ -27,3 +27,5 @@ sample_images/*
 dataset_raw/
 
 model/image_guard/
+
+dataset_download/

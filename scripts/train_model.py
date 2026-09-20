@@ -91,6 +91,12 @@ def train(args: argparse.Namespace) -> dict:
         torch.set_num_threads(min(4, torch.get_num_threads()))
     started = perf_counter()
     counts = check_split_leakage(args.data)
+    manifest_path = args.data / "manifest.json"
+    dataset_provenance = {}
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        dataset_provenance = {"source": manifest.get("source"),
+                              "provenance": manifest.get("provenance", {})}
     loaders = make_loaders(args.data, args.batch_size, args.seed)
     model = build_model(pretrained=True).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -113,6 +119,7 @@ def train(args: argparse.Namespace) -> dict:
                 "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
                 "classes": list(CLASSES), "best_val_accuracy": best_accuracy,
                 "epoch": epoch, "architecture": "mobilenet_v3_small",
+                "dataset_provenance": dataset_provenance,
                 "training_params": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
             }
             temporary = args.output.with_suffix(".tmp")

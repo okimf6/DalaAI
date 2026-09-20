@@ -1,0 +1,29 @@
+{
+  "provenance": {
+    "source": "https://www.kaggle.com/datasets/yasserhessein/wheat-disease-dataset-small",
+    "download_url": "https://www.kaggle.com/api/v1/datasets/download/yasserhessein/wheat-disease-dataset-small",
+    "downloaded_at": "2026-09-20T10:21:10.208474+00:00",
+    "archive_sha256": "f35ec1ce9e905a10685327fdf58909f96a628d516fb121ab6ce1ffbd9ccc8dbe"
+  },
+  "counts": {
+    "train": {
+      "septoria": 243,
+      "yellow_rust": 167,
+      "healthy": 84,
+      "leaf_rust": 89
+    },
+    "val": {
+      "septoria": 53,
+      "yellow_rust": 36,
+      "healthy": 19,
+      "leaf_rust": 20
+    },
+    "test": {
+      "yellow_rust": 36,
+      "septoria": 53,
+      "healthy": 19,
+      "leaf_rust": 19
+    }
+  },
+  "same_images_and_splits_as_previous": true
+}
