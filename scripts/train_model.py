@@ -1,5 +1,6 @@
 """Обучение MobileNetV3 Small: train/val/test с проверкой единого порядка классов."""
 import argparse
+import hashlib
 import json
 from time import perf_counter
 import random
@@ -53,14 +54,15 @@ def make_loaders(data: Path, batch_size: int, seed: int) -> dict[str, DataLoader
 
 
 def run_epoch(model: nn.Module, loader: DataLoader, device: torch.device,
-              optimizer: torch.optim.Optimizer | None = None) -> tuple[float, float]:
+              optimizer: torch.optim.Optimizer | None = None,
+              class_weights: torch.Tensor | None = None) -> tuple[float, float]:
     """Один проход: средняя cross entropy и accuracy по всем объектам."""
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
     correct = 0
     count = 0
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     with torch.set_grad_enabled(training):
         for images, targets in loader:
             images, targets = images.to(device), targets.to(device)
@@ -98,28 +100,46 @@ def train(args: argparse.Namespace) -> dict:
         dataset_provenance = {"source": manifest.get("source"),
                               "provenance": manifest.get("provenance", {})}
     loaders = make_loaders(args.data, args.batch_size, args.seed)
-    model = build_model(pretrained=True).to(device)
+    initial = getattr(args, "init", None)
+    model = build_model(pretrained=initial is None).to(device)
+    if initial is not None:
+        initial_checkpoint = torch.load(initial, map_location="cpu", weights_only=True)
+        if initial_checkpoint.get("classes") != list(CLASSES):
+            raise ValueError("Порядок классов начальных весов не совпадает.")
+        model.load_state_dict(initial_checkpoint["model_state_dict"])
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     best_accuracy = -1.0
+    best_score = -1.0
+    weights = None
+    if getattr(args, "balanced", False):
+        frequencies = torch.tensor([counts["train"][c] for c in CLASSES], dtype=torch.float32, device=device)
+        weights = frequencies.sum() / (len(CLASSES) * frequencies)
+    selection = getattr(args, "selection", "accuracy")
     stale = 0
     history = []
     print(f"Устройство: {device}. Порядок классов: {list(CLASSES)}")
     for epoch in range(1, args.epochs + 1):
-        train_loss, train_accuracy = run_epoch(model, loaders["train"], device, optimizer)
+        train_loss, train_accuracy = run_epoch(model, loaders["train"], device, optimizer, weights)
         val_loss, val_accuracy = run_epoch(model, loaders["val"], device)
+        val_metrics = evaluate_model(model, loaders["val"], device)
+        score = val_metrics[selection]
         print(f"Эпоха {epoch:02d}/{args.epochs}: train loss={train_loss:.4f}, accuracy={train_accuracy:.2%}; "
-              f"val loss={val_loss:.4f}, accuracy={val_accuracy:.2%}", flush=True)
+              f"val loss={val_loss:.4f}, accuracy={val_accuracy:.2%}, macro-F1={val_metrics['macro_f1']:.4f}, rust recall={val_metrics['per_class']['leaf_rust']['recall']:.2%}", flush=True)
         history.append({"epoch": epoch, "train_loss": train_loss, "train_accuracy": train_accuracy,
-                        "val_loss": val_loss, "val_accuracy": val_accuracy})
-        if val_accuracy > best_accuracy:
+                        "val_loss": val_loss, "val_accuracy": val_accuracy, "val_metrics": val_metrics})
+        if score > best_score:
+            best_score = score
             best_accuracy = val_accuracy
             stale = 0
             checkpoint = {
                 "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
                 "classes": list(CLASSES), "best_val_accuracy": best_accuracy,
+                "selection_metric": selection, "best_selection_score": best_score,
+                "validation_metrics": val_metrics,
                 "epoch": epoch, "architecture": "mobilenet_v3_small",
                 "dataset_provenance": dataset_provenance,
+                "initial_checkpoint_sha256": hashlib.sha256(initial.read_bytes()).hexdigest() if initial else None,
                 "training_params": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
             }
             temporary = args.output.with_suffix(".tmp")
@@ -145,7 +165,7 @@ def train(args: argparse.Namespace) -> dict:
     torch.save(checkpoint, temporary)
     temporary.replace(args.output)
     args.output.with_suffix(".metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Лучшая val accuracy: {best_accuracy:.2%}. Test accuracy: {test_accuracy:.2%}, loss: {test_loss:.4f}")
+    print(f"Val accuracy выбранной модели: {best_accuracy:.2%}. Test accuracy: {test_accuracy:.2%}, loss: {test_loss:.4f}")
     print(f"Модель сохранена: {args.output}")
     return checkpoint
 
@@ -159,6 +179,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--output", type=Path, default=MODEL_PATH)
     parser.add_argument("--patience", type=int, default=4)
+    parser.add_argument("--init", type=Path, help="Checkpoint для дообучения вместо ImageNet")
+    parser.add_argument("--balanced", action="store_true", help="Веса cross entropy обратно пропорциональны частотам train")
+    parser.add_argument("--selection", choices=("accuracy", "macro_f1"), default="accuracy")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
